@@ -8,6 +8,7 @@ import modelModels from "../models/Model.js";
 import productModel from "../models/Product.js";
 import jwt from "jsonwebtoken";
 
+//API for create New Category
 const createCategory = async (req, res) => {
   try {
     const { name } = req.body;
@@ -47,6 +48,7 @@ const createCategory = async (req, res) => {
   }
 };
 
+//API for  create Brands
 const createBrand = async (req, res) => {
   try {
     const { name } = req.body;
@@ -79,6 +81,7 @@ const createBrand = async (req, res) => {
     });
   }
 };
+//API for create New Series
 const createSeries = async (req, res) => {
   try {
     const { name, brandId } = req.body;
@@ -131,6 +134,7 @@ const createSeries = async (req, res) => {
   }
 };
 
+// API for create New Model
 const createModel = async (req, res) => {
   try {
     const { name, brandId, seriesId } = req.body;
@@ -183,6 +187,7 @@ const createModel = async (req, res) => {
   }
 };
 
+// API end point for create new products
 const createProduct = async (req, res) => {
   try {
     const {
@@ -325,6 +330,7 @@ const createProduct = async (req, res) => {
   }
 };
 
+//API end point fo login ADMin
 const loginAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -353,11 +359,123 @@ const loginAdmin = async (req, res) => {
   }
 };
 
+//API to get all Brands List for admin panel
+const allBrands = async (req, res) => {
+  try {
+    const brands = await brandModel.find({});
+    return res.status(200).json({
+      success: true,
+      message: "Brands list fetched successfully",
+      brands: brands,
+    });
+  } catch (error) {
+    console.error("Error fetching brands:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching brands",
+    });
+  }
+};
+
+// API for get all series brand wise
+const getSeriesByBrandWise = async (req, res) => {
+  try {
+    const { brandId } = req.body;
+
+    if (!brandId) {
+      return res.status(400).json({
+        success: false,
+        message: "brandId is required",
+      });
+    }
+
+    const series = await seriesModel.find({ brandId });
+
+    if (!series || series.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No series found for the provided brandId",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Series list fetched successfully",
+      series,
+    });
+  } catch (error) {
+    console.error("Error fetching series by brandId:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching series",
+    });
+  }
+};
+
+// API for get all model by seriesId
+const getModelByBrandAndSeries = async (req, res) => {
+  try {
+    const { brandId, seriesId } = req.body;
+    if (!brandId || !seriesId) {
+      return res.status(400).json({
+        success: false,
+        message: "brandId and seriesId are required",
+      });
+    }
+    const model = await modelModels.find({ brandId, seriesId });
+    if (!model) {
+      return res.status(404).json({
+        success: false,
+        message: "No model found for the provided brandId and seriesId",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      model,
+      message: "Model fetched successfully",
+    });
+  } catch (error) {
+    console.error("Error fetching model by series:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching model",
+    });
+  }
+};
+
+// API for Get ALL Products
+const getAllProducts = async (req, res) => {
+  try {
+    const products = await productModel.find();
+    if (!products) {
+      return res.status(404).json({
+        success: false,
+        message: "No products found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      products,
+      message: "Products fetched successfully",
+    });
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching products",
+    });
+  }
+};
+
 export {
   createCategory,
   createBrand,
   createSeries,
   createModel,
   createProduct,
-  loginAdmin
+  loginAdmin,
+  allBrands,
+  getSeriesByBrandWise,
+  getModelByBrandAndSeries,
+  getAllProducts,
 };
