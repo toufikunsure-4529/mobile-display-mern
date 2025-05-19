@@ -2,6 +2,10 @@ import validator from "validator";
 import bcrypt from "bcrypt";
 import userModel from "../models/userModel.js";
 import jwt from "jsonwebtoken";
+import productModel from "../models/Product.js";
+import orderModel from "../models/orderModel.js";
+import mongoose from "mongoose";
+import cartModel from "../models/cartModel.js";
 
 const registerUser = async (req, res) => {
   try {
@@ -74,4 +78,433 @@ const loginUser = async (req, res) => {
   }
 };
 
-export { registerUser, loginUser };
+// Create New Order API
+const createOrder = async (req, res) => {
+  try {
+    const {
+      userId,
+      productId,
+      shippingAddress,
+      totalPrice,
+      orderNotes,
+      tax = 0,
+      shippingCost = 0,
+      discount = 0,
+    } = req.body;
+    // Validate required fields
+    if (!userId || !productId || !shippingAddress || !totalPrice) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    const userData = await userModel.findById(userId).select("-password");
+    if (!userData) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const productData = await productModel.findById(productId); // Find product by ID
+    if (!productData) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Validate shipping address fields
+    const requiredAddressFields = [
+      "fullName",
+      "address",
+      "city",
+      "state",
+      "postalCode",
+      "phone",
+      "email",
+    ];
+    const missingAddressFields = requiredAddressFields.filter(
+      (field) => !shippingAddress[field]
+    );
+
+    if (missingAddressFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing required shipping address fields: ${missingAddressFields.join(
+          ", "
+        )}`,
+      });
+    }
+
+    // Validate email format using validator
+    if (!validator.isEmail(shippingAddress.email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
+
+    // Validate totalPrice
+    if (typeof totalPrice !== "number" || totalPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Total price must be a non-negative number",
+      });
+    }
+
+    const newOrder = new orderModel({
+      userId,
+      productId,
+      userData: userData,
+      productData: productData,
+      shippingAddress,
+      totalPrice,
+      tax,
+      shippingCost,
+      discount,
+      orderNotes,
+      orderStatus: "pending",
+      isPaid: false,
+      isDelivered: false,
+    });
+
+    const saveOrder = await newOrder.save();
+    res.status(201).json({
+      success: true,
+      message: "Order successfully",
+      data: saveOrder,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+// Get User Wise Order
+const listOrder = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+    const orders = await orderModel.find({ userId }); // Find orders by user ID
+    res.status(200).json({
+      success: true,
+      message: "Order Fetched successfully",
+      data: orders,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+const cancelOrder = async (req, res) => {
+  try {
+    const { orderId, userId } = req.body;
+
+    const orderData = await orderModel.findById(orderId);
+    if (orderData.userId !== userId) {
+      return res.status(400).json({
+        success: false,
+        message: "You are not authorized to cancel this order",
+      });
+    }
+    await orderModel.findByIdAndUpdate(orderId, { orderStatus: "cancelled" }); // Update order status to cancelled
+    res.status(200).json({
+      success: true,
+      message: "Order cancelled successfully",
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+// API to add or update items in the cart
+const addToCart = async (req, res) => {
+  try {
+    const { userId, productId, quantity } = req.body;
+    const productData = await productModel.findById(productId);
+    if (!userId || !productId || !quantity) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide all required fields",
+      });
+    }
+
+    // Validate quantity
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be a positive integer",
+      });
+    }
+    // Validate userId format
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId format",
+      });
+    }
+    // Validate productId format
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId format",
+      });
+    }
+
+    // Validate productData has price or salePrice
+    if (!productData.salePrice && !productData.price) {
+      return res.status(400).json({
+        success: false,
+        message: "productData must contain either salePrice or price",
+      });
+    }
+
+    // Find Or create cart
+    let cart = await cartModel.findOne({ userId });
+    if (!cart) {
+      // Create new cart
+      const itemPrice = productData.salePrice || productData.price; // Use salePrice if available, else price
+
+      cart = new cartModel({
+        userId,
+        items: [{ productId, quantity, productData }],
+        totalItems: quantity,
+        totalPrice: itemPrice * quantity,
+      });
+    } else {
+      // Update existing cart
+      const itemIndex = cart.items.findIndex(
+        (item) => item.productId === productId
+      ); // Find the item in the cart
+
+      if (itemIndex > -1) {
+        cart.items[itemIndex].quantity = quantity;
+        cart.items[itemIndex].productData = productData; // Update productData in case it changed
+      } else {
+        cart.items.push({ productId, quantity, productData });
+      }
+      // recalculate total price
+      cart.totalItems = cart.items.reduce(
+        (sum, item) => sum + item.quantity,
+        0
+      );
+      cart.totalPrice = cart.items.reduce((sum, item) => {
+        const itemPrice = item.productData.salePrice || item.productData.price; // Use salePrice if available, else price
+        return sum + itemPrice * item.quantity;
+      }, 0);
+    }
+    const savedCart = await cart.save();
+    return res.status(200).json({
+      success: true,
+      message: cart.isNew
+        ? "Cart created successfully"
+        : "Cart updated successfully",
+
+      data: savedCart,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+// API for update cart quantity
+const updateCartQuantity = async (req, res) => {
+  try {
+    const { userId, productId, operation } = req.body;
+    if (!userId || !productId || !operation) {
+      return res.status(400).json({
+        success: false,
+        message: "userId, productId, and operation are required",
+      });
+    }
+
+    // Validate userId format
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId format",
+      });
+    }
+    // Validate productId format
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId format",
+      });
+    }
+    if (!["increment", "decrement"].includes(operation)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid operation. It should be either 'increment' or 'decrement'",
+      });
+    }
+
+    //Find the cart
+    const cart = await cartModel.findOne({ userId });
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        message: "Cart not found",
+      });
+    }
+    // Find the item in the cart
+    const itemIndex = cart.items.findIndex(
+      (item) => item.productId === productId
+    );
+    if (itemIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found in cart",
+      });
+    }
+    // Update quantity
+    if (operation === "increment") {
+      cart.items[itemIndex].quantity += 1;
+    } else {
+      cart.items[itemIndex].quantity -= 1;
+    }
+
+    // Remove item if quantity is 0 or less
+    if (cart.items[itemIndex].quantity <= 0) {
+      cart.items.splice(itemIndex, 1);
+    }
+    // If cart is empty, delete it
+    if (cart.items.length === 0) {
+      await cartModel.deleteOne({ userId });
+      return res.status(200).json({
+        success: true,
+        message: "Cart cleared as the last item was removed",
+        data: null,
+      });
+    }
+
+    // Recalculate totals
+    cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+    cart.totalPrice = cart.items.reduce((sum, item) => {
+      const itemPrice = item.productData.salePrice || item.productData.price;
+      return sum + itemPrice * item.quantity;
+    }, 0);
+    const updatedCart = await cart.save();
+    return res.status(200).json({
+      success: true,
+      message: "Cart updated successfully",
+      data: updatedCart,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+const removeFromCart = async (req, res) => {
+  try {
+    const { userId, productId } = req.body;
+
+    // Validate input parameters
+    if (!userId || !productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Both userId and productId are required",
+      });
+    }
+
+    // Validate ObjectId formats
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId format",
+      });
+    }
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId format",
+      });
+    }
+
+    // Find the cart
+    const cart = await cartModel.findOne({ userId });
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        message: "Cart not found",
+      });
+    }
+
+    // Check if product exists in cart
+    const itemIndex = cart.items.findIndex(
+      (item) => item.productId.toString() === productId
+    );
+    if (itemIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found in cart",
+      });
+    }
+
+    // Remove the item
+    cart.items.splice(itemIndex, 1);
+
+    // Recalculate totals
+    cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+    cart.totalPrice = cart.items.reduce((sum, item) => {
+      const itemPrice = item.productData.salePrice || item.productData.price;
+      return sum + itemPrice * item.quantity;
+    }, 0);
+
+    // Handle empty cart
+    if (cart.items.length === 0) {
+      await cartModel.deleteOne({ userId });
+      return res.status(200).json({
+        success: true,
+        message: "Cart cleared as the last item was removed",
+        data: null,
+      });
+    }
+
+    // Save updated cart
+    const updatedCart = await cart.save();
+    return res.status(200).json({
+      success: true,
+      message: "Item removed from cart successfully",
+      data: updatedCart,
+    });
+  } catch (error) {
+    console.error("Error removing item from cart:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+export {
+  registerUser,
+  loginUser,
+  createOrder,
+  listOrder,
+  cancelOrder,
+  addToCart,
+  updateCartQuantity,
+  removeFromCart,
+};
