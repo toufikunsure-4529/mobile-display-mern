@@ -6,6 +6,7 @@ import productModel from "../models/Product.js";
 import orderModel from "../models/orderModel.js";
 import mongoose from "mongoose";
 import cartModel from "../models/cartModel.js";
+import { v2 as cloudinary } from "cloudinary";
 
 const registerUser = async (req, res) => {
   try {
@@ -69,6 +70,100 @@ const loginUser = async (req, res) => {
     } else {
       return res.status(401).json({ message: "Invalid Password" });
     }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+// API to user Profile Data
+const getProfile = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const userData = await userModel.findById(userId).select("-password");
+    res.status(200).json({
+      success: true,
+      message: "User Profile Data Fetched Successfully",
+      data: userData,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+const updateProfile = async (req, res) => {
+  try {
+    const { userId, name, phone, address, gender } = req.body;
+    const imageFile = req.file;
+    if ((!userId, !name, !phone, !address, !gender)) {
+      return res
+        .status(400)
+        .json({ message: "Please provide all required fields" });
+    }
+
+    // Validate userId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid user ID" });
+    }
+
+    // Parse address
+    let parsedAddress;
+    try {
+      parsedAddress = JSON.parse(address);
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid address format" });
+    }
+
+    const updateData = {
+      name,
+      phone,
+      address: parsedAddress,
+      gender,
+    };
+    const user = await userModel.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Handle image upload
+    if (imageFile) {
+      try {
+        const imageUpload = await cloudinary.uploader.upload(imageFile.path, {
+          resource_type: "image",
+          folder: "user",
+        });
+        const imageURL = imageUpload.secure_url;
+        await userModel.findByIdAndUpdate(
+          userId,
+          { image: imageURL },
+          { new: true }
+        );
+      } catch (error) {
+        console.error("Cloudinary upload error:", error);
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to upload image" });
+      }
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "User updated successfully" });
   } catch (error) {
     console.log(error);
     res.status(500).json({
@@ -507,4 +602,6 @@ export {
   addToCart,
   updateCartQuantity,
   removeFromCart,
+  getProfile,
+  updateProfile,
 };
