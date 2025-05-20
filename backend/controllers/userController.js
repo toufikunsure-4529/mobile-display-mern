@@ -7,6 +7,7 @@ import orderModel from "../models/orderModel.js";
 import mongoose from "mongoose";
 import cartModel from "../models/cartModel.js";
 import { v2 as cloudinary } from "cloudinary";
+import wishListModel from "../models/wishlistModel";
 
 const registerUser = async (req, res) => {
   try {
@@ -593,6 +594,117 @@ const removeFromCart = async (req, res) => {
   }
 };
 
+const addToWishlist = async (req, res) => {
+  try {
+    const { userId, productId } = req.body;
+    const productData = await productModel.findById(productId);
+
+    if (!userId || !productId || !productData) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: userId, productId, or productData",
+      });
+    }
+    // Validate productId format
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId format",
+      });
+    }
+    // Validate userId format
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId format",
+      });
+    }
+    // Find user's wishlist
+    let wishlist = await wishListModel.findOne({ userId });
+    if (!wishlist) {
+      // Create new wishlist if it doesn't exist
+      wishlist = await wishListModel.create({
+        userId,
+        items: [{ productId, productData }],
+      });
+    } else {
+      const itemExists = wishlist.items.some(
+        (item) => item.productId === productId
+      );
+      if (itemExists) {
+        return res.status(200).json({
+          success: true,
+          message: "Product is already in the wishlist",
+        });
+      }
+      wishlist.items.push({ productId, productData });
+      await wishlist.save();
+    }
+    return res.status(200).json({
+      success: true,
+      message: "Product added to wishlist successfully",
+      wishlist,
+    });
+  } catch (error) {
+    console.error("Error adding item to wishlist:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
+
+const removeFromWishlist = async (req, res) => {
+  try {
+    const { userId, productId } = req.body;
+    if (!userId || !productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: userId and productId",
+      });
+    }
+    if (
+      !mongoose.Types.ObjectId.isValid(userId) ||
+      !mongoose.Types.ObjectId.isValid(productId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId or productId format",
+      });
+    }
+    const wishlist = await wishListModel.findOne({ userId });
+    if (!wishlist) {
+      return res.status(404).json({
+        success: false,
+        message: "Wishlist not found for the given user",
+      });
+    }
+    const initialLength = wishlist.items.length;
+
+    wishlist.items = wishlist.items.filter(
+      (item) => item.productId !== productId
+    );
+    if (wishlist.items.length === initialLength) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found in the wishlist",
+      });
+    }
+    await wishlist.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Product removed from wishlist successfully",
+      wishlist,
+    });
+  } catch (error) {
+    console.error("Error removing item from wishlist:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Internal Server Error: ${error.message}`,
+    });
+  }
+};
 export {
   registerUser,
   loginUser,
@@ -604,4 +716,6 @@ export {
   removeFromCart,
   getProfile,
   updateProfile,
+  addToWishlist,
+  removeFromWishlist
 };
